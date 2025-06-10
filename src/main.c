@@ -4,8 +4,6 @@
 #include "esp_log.h"
 #include "flow_sensor.h"
 
-// This is just a test
-
 void app_main()
 {
     gpio_config_t io_conf = {

@@ -1,5 +1,4 @@
 // flow_sensor.c
-// another test
 #include "flow_sensor.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
