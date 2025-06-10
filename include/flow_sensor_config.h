@@ -1,0 +1,18 @@
+#ifndef FLOW_SENSOR_CONFIG_H
+#define FLOW_SENSOR_CONFIG_H
+
+// I2C configuration
+#define I2C_MASTER_SCL_IO 22
+#define I2C_MASTER_SDA_IO 21
+#define I2C_MASTER_FREQ_HZ 100000
+#define SENSOR_ADDR 0x08
+
+// CRC configuration
+#define POLYNOMIAL 0x31
+#define CRC_INIT_VALUE 0xFF
+
+// Sensor-specific commands
+#define SENSOR_CMD_START_CONTINUOUS_MEASUREMENT_0 0x36
+#define SENSOR_CMD_START_CONTINUOUS_MEASUREMENT_1 0x08
+
+#endif // FLOW_SENSOR_CONFIG_H
