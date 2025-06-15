@@ -3,44 +3,89 @@
 #include "freertos/task.h"
 #include "config.h"
 #include "driver/gptimer.h"
-#include "esp_log.h"
+#include "sensor_driver.h"
+#include "driver/gpio.h"
 
-static const char* TAG = "MAIN";
 
+
+// Timer handle (global, not re-declared in app_main)
 static gptimer_handle_t timer = NULL;
 
+// PID task handle for notification
+static TaskHandle_t pid_task_handle = NULL;
+
+// PID task: runs motor_control_run_pid() safely in task context
+static void pid_task(void *arg)
+{
+    while (true)
+    {
+        // Wait for notification from ISR
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        motor_control_run_pid();
+    }
+}
+
+// ISR callback (do NOT call motor_control_run_pid here!)
 static bool IRAM_ATTR timer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx)
 {
-    motor_control_run_pid();  // call directly from ISR
-    return true; // return true to yield to a higher-priority task if needed
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(pid_task_handle, &xHigherPriorityTaskWoken);
+    return xHigherPriorityTaskWoken == pdTRUE; // yield if higher priority task was woken
 }
 
 void app_main(void)
 {
+    // Power on sensor via GPIO12
+    gpio_config_t io_conf = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_12),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+    gpio_set_level(GPIO_NUM_12, 1); // Set HIGH to power sensor
+    vTaskDelay(pdMS_TO_TICKS(500));  // Wait for sensor to boot
+    // Sensor setup
+    sensor_driver_init();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    flow_sensor_start_measurement();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    //flow_task_create();
+    //vTaskDelay(pdMS_TO_TICKS(100));
+
+    // Init motor and setpoint
     motor_control_init();
     motor_control_set_point(120.0);
+    vTaskDelay(pdMS_TO_TICKS(100));
 
+
+    // Start PID task
+    xTaskCreatePinnedToCore(pid_task, "pid_task", 4096, NULL, 10, &pid_task_handle, 1); // Run on core 1
+
+    // Configure GPTimer
     gptimer_config_t timer_config = {
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
-        .resolution_hz = 1000000, // 1 MHz -> 1 tick = 1 us
+        .resolution_hz = 1000000, // 1 MHz = 1 tick = 1 microsecond
     };
-    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &timer));
+    gptimer_new_timer(&timer_config, &timer);  // use global timer, don't redeclare
 
     gptimer_event_callbacks_t cbs = {
         .on_alarm = timer_callback,
     };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(timer, &cbs, NULL));
+    gptimer_register_event_callbacks(timer, &cbs, NULL);
 
-    ESP_ERROR_CHECK(gptimer_set_raw_count(timer, 0));
+    gptimer_set_raw_count(timer, 0);
 
     gptimer_alarm_config_t alarm_config = {
-        .alarm_count = PID_INTERVAL_MS * 1000,  // convert ms to us
+        .alarm_count = PID_INTERVAL_MS * 1000, // ms to us
         .flags.auto_reload_on_alarm = true,
     };
-    ESP_ERROR_CHECK(gptimer_set_alarm_action(timer, &alarm_config));
-    ESP_ERROR_CHECK(gptimer_enable(timer));
-    ESP_ERROR_CHECK(gptimer_start(timer));
+    gptimer_set_alarm_action(timer, &alarm_config);
 
-    ESP_LOGI(TAG, "GPTimer started to run PID every %d ms", PID_INTERVAL_MS);
+    gptimer_enable(timer);
+    gptimer_start(timer);
 }
