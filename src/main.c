@@ -58,7 +58,8 @@ void app_main(void)
 
     // Init motor and setpoint
     motor_control_init();
-    motor_control_set_point(120.0);
+    motor_control_set_point(3250.0);
+
     vTaskDelay(pdMS_TO_TICKS(100));
 
 

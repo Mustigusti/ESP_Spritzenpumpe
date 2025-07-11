@@ -15,8 +15,8 @@ static float prev_error = 0;
 
 static void pwm_init()
 {
-    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, 18);
-    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, 19);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, 32);
+    mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0B, 33);
 
     mcpwm_config_t pwm_config = {
         .frequency = PWM_FREQ_HZ,
