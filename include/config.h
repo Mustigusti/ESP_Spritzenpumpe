@@ -14,7 +14,7 @@
 #define K_U 0.004227f
 #define T_U 0.176571f
 #define K_P (0.6f * K_U * 0.4f)
-#define K_I 0.5 * (2.0f * K_P / T_U * 0.001f)
+#define K_I (2.0f * K_P / T_U * 0.001f)
 #define K_D (K_P * T_U / 8.0f * 1.1f)
 
 #endif // CONFIG_H

@@ -7,6 +7,7 @@
 #include "driver/gpio.h"
 
 
+#define LED_GPIO GPIO_NUM_2 // Define the GPIO pin for the LED
 
 // Timer handle (global, not re-declared in app_main)
 static gptimer_handle_t timer = NULL;
@@ -20,8 +21,21 @@ static void pid_task(void *arg)
     while (true)
     {
         // Wait for notification from ISR
+        motor_control_stop();
+
+
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        motor_control_run_pid();
+        //motor_control_run_pid();
+        gpio_reset_pin(LED_GPIO);
+        gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
+        while (1) {
+        motor_control_stop();
+        gpio_set_level(LED_GPIO, 1);  // Set GPIO2 high
+        vTaskDelay(pdMS_TO_TICKS(1000));  // Do nothing
+        gpio_set_level(LED_GPIO, 0);  // Set GPIO2 high
+        vTaskDelay(pdMS_TO_TICKS(1000));  // Do nothing
+        }
+        //motor_control_reverse();
     }
 }
 
@@ -35,6 +49,9 @@ static bool IRAM_ATTR timer_callback(gptimer_handle_t timer, const gptimer_alarm
 
 void app_main(void)
 {
+
+    // turn of the blue on board led
+
     // Power on sensor via GPIO12
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << GPIO_NUM_12),
@@ -45,6 +62,13 @@ void app_main(void)
     };
     gpio_config(&io_conf);
     gpio_set_level(GPIO_NUM_12, 1); // Set HIGH to power sensor
+    gpio_set_level(GPIO_NUM_2, 1); // Set HIGH to power sensor
+
+
+    gpio_reset_pin(GPIO_NUM_0);
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
+    gpio_pullup_en(GPIO_NUM_0); // enable internal pull-up
+
     vTaskDelay(pdMS_TO_TICKS(500));  // Wait for sensor to boot
     // Sensor setup
     sensor_driver_init();
@@ -58,8 +82,12 @@ void app_main(void)
 
     // Init motor and setpoint
     motor_control_init();
-    motor_control_set_point(3250.0);
+<<<<<<< HEAD
+    motor_control_set_point(2000.0);
 
+=======
+    motor_control_set_point(120.0);
+>>>>>>> parent of 19ba8c1 (An Motor angeschlossen)
     vTaskDelay(pdMS_TO_TICKS(100));
 
 
