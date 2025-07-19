@@ -5,8 +5,10 @@
 #include "driver/gptimer.h"
 #include "sensor_driver.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
 
 
+#define LED_GPIO GPIO_NUM_2 // Define the GPIO pin for the LED
 
 // Timer handle (global, not re-declared in app_main)
 static gptimer_handle_t timer = NULL;
@@ -21,7 +23,13 @@ static void pid_task(void *arg)
     {
         // Wait for notification from ISR
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        motor_control_run_pid();
+        // motor_control_run_pid();
+        while (1)
+        {
+            // motor_control_run_pid();
+            // motor_control_stop();
+            motor_control_reverse();
+        }
     }
 }
 
@@ -35,6 +43,10 @@ static bool IRAM_ATTR timer_callback(gptimer_handle_t timer, const gptimer_alarm
 
 void app_main(void)
 {
+    ESP_LOGI("DEBUG", "🚨 This is the NEW firmware (clean build)");
+
+    // turn of the blue on board led
+
     // Power on sensor via GPIO12
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << GPIO_NUM_12),
@@ -45,7 +57,13 @@ void app_main(void)
     };
     gpio_config(&io_conf);
     gpio_set_level(GPIO_NUM_12, 1); // Set HIGH to power sensor
-    vTaskDelay(pdMS_TO_TICKS(500));  // Wait for sensor to boot
+    gpio_set_level(GPIO_NUM_2, 1);  // Set HIGH to power sensor
+
+    gpio_reset_pin(GPIO_NUM_0);
+    gpio_set_direction(GPIO_NUM_0, GPIO_MODE_INPUT);
+    gpio_pullup_en(GPIO_NUM_0); // enable internal pull-up
+
+    vTaskDelay(pdMS_TO_TICKS(500)); // Wait for sensor to boot
     // Sensor setup
     sensor_driver_init();
     vTaskDelay(pdMS_TO_TICKS(100));
@@ -53,15 +71,13 @@ void app_main(void)
     flow_sensor_start_measurement();
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    //flow_task_create();
-    //vTaskDelay(pdMS_TO_TICKS(100));
+    // flow_task_create();
+    // vTaskDelay(pdMS_TO_TICKS(100));
 
     // Init motor and setpoint
     motor_control_init();
-    motor_control_set_point(3250.0);
-
+    motor_control_set_point(1000.0);
     vTaskDelay(pdMS_TO_TICKS(100));
-
 
     // Start PID task
     xTaskCreatePinnedToCore(pid_task, "pid_task", 4096, NULL, 10, &pid_task_handle, 1); // Run on core 1
@@ -72,7 +88,7 @@ void app_main(void)
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = 1000000, // 1 MHz = 1 tick = 1 microsecond
     };
-    gptimer_new_timer(&timer_config, &timer);  // use global timer, don't redeclare
+    gptimer_new_timer(&timer_config, &timer); // use global timer, don't redeclare
 
     gptimer_event_callbacks_t cbs = {
         .on_alarm = timer_callback,
