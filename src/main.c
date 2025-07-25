@@ -1,156 +1,117 @@
+// main.c
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gptimer.h"
-#include "motor_control.h"
-#include "sensor_driver.h"
-#include "uart_comm.h"
-#include "config.h"
+#include "driver/uart.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
+#include "motor_control.h"
+#include "sensor_driver.h"
+#include "config.h"
 #include <string.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include "esp_rom_sys.h"
+#include "uart_comm.h"
 
-static const char *TAG = "MAIN";
+#define TAG "SUPER_LOOP"
 
-// PID task handle
-static TaskHandle_t pid_task_handle = NULL;
+// one global flag, start stopped
+volatile bool is_running = false; // shared with uart_comm.c
 
-// Timer handle
-static gptimer_handle_t timer = NULL;
-
-// PID task
-static void pid_task(void *arg)
+void app_main(void)
 {
-    while (true)
+
+    // --- 1) Init hardware ---
+
+    // On‑board LED on GPIO2 (for debug blink, optional)
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << GPIO_NUM_2),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&io);
+
+    // Power the flow sensor
+    gpio_set_direction(GPIO_NUM_12, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_12, 1);
+
+    // I2C sensor init
+    sensor_driver_init();
+    flow_sensor_start_measurement();
+
+    // Motor control init + default setpoint
+    motor_control_init();
+    motor_control_set_point(1000.0f);
+
+    // UART init (talk to Pico)
+    uart_config_t ucfg = {
+        .baud_rate = UART_BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+    
+    uart_comm_init();
+    char cmd_buf[UART_BUF_SIZE];
+    bool led = true;
+
+    // --- 2) Super‐loop ---
+    while (1)
     {
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-        if (is_running) // from uart_comm.c: volatile bool is_running = true;
+        ESP_LOGI(TAG, "Running main loop, is_running=%d", is_running);
 
+        // 2a) Poll for a command (non‐blocking, 100 ms timeout)
+        int len = uart_read_bytes(UART_PORT_NUM,
+                                  (uint8_t *)cmd_buf,
+                                  sizeof(cmd_buf) - 1,
+                                  pdMS_TO_TICKS(100));
+        if (len > 0)
         {
-            float flow = motor_control_run_pid(); //returns flow rate of the syringe
-            uart_comm_send_flow(flow); //sends flow to the other microcontroller(pico) via UART
+            cmd_buf[len] = '\0';
+            if (strncmp(cmd_buf, "START", 5) == 0)
+                is_running = true;
+            else if (strncmp(cmd_buf, "STOP", 4) == 0)
+                is_running = false;
+            else if (strncmp(cmd_buf, "REVERSE", 7) == 0)
+                motor_control_reverse();
+            else if (strncmp(cmd_buf, "FORWARD", 7) == 0)
+                motor_control_forward();
+            else if (strncmp(cmd_buf, "SETPOINT:", 9) == 0)
+            {
+                float sp = atof(&cmd_buf[9]);
+                motor_control_set_point(sp);
+                is_running = true;
+            }
+            // (ignore unrecognized)
+        }
+
+        // 2b) If running, do PID + send flow
+        if (is_running)
+        {
+            // toggle LED so you can see loop running
+            gpio_set_level(GPIO_NUM_2, led);
+            // led = !led;
+
+            float flow = motor_control_run_pid();
+            // send back "FLOW:xx.xx\n"
+            char out[32];
+            int n = snprintf(out, sizeof(out), "FLOW:%.2f\n", flow);
+            uart_write_bytes(UART_PORT_NUM, out, n);
         }
         else
         {
             motor_control_stop();
         }
+        vTaskDelay(pdMS_TO_TICKS(12));
+        // esp_rom_delay_us(12000);
+
+        // 2c) Delay ~12 ms before next loop
+        // while (true)
+        // {
+        //     gpio_set_level(GPIO_NUM_2, 1);
+        //     vTaskDelay(pdMS_TO_TICKS(500));
+        //     gpio_set_level(GPIO_NUM_2, 0);
+        // }
     }
-}
-
-// UART command task
-static void uart_command_task(void *arg)
-{
-    char buffer[UART_BUF_SIZE];
-
-    while (true)
-    {
-        int len = uart_comm_receive_command(buffer, sizeof(buffer));
-        if (len > 0)
-        {
-            ESP_LOGI(TAG, "UART CMD: '%s'", buffer);
-
-            if (strncmp(buffer, "START", 5) == 0)
-            {
-                motor_control_init();
-                is_running = true;
-                ESP_LOGI(TAG, "Command: START");
-            }
-            else if (strncmp(buffer, "STOP", 4) == 0)
-            {
-                motor_control_stop();
-                is_running = false;
-                ESP_LOGI(TAG, "Command: STOP");
-            }
-            else if (strncmp(buffer, "REVERSE", 7) == 0)
-            {
-                motor_control_reverse();
-                ESP_LOGI(TAG, "Command: REVERSE");
-            }
-            else if (strncmp(buffer, "FORWARD", 7) == 0)
-            {
-                motor_control_forward();
-                ESP_LOGI(TAG, "Command: FORWARD");
-            }
-            else if (strncmp(buffer, "SETPOINT:", 9) == 0)
-            {
-                float sp = atof(&buffer[9]);
-                motor_control_set_point(sp);
-                ESP_LOGI(TAG, "Command: SETPOINT = %.2f", sp);
-            }
-            else
-            {
-                ESP_LOGW(TAG, "Unknown UART command");
-            }
-        }
-    }
-}
-
-// ISR callback
-static bool IRAM_ATTR timer_callback(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_ctx)
-{
-    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-    vTaskNotifyGiveFromISR(pid_task_handle, &xHigherPriorityTaskWoken);
-    return xHigherPriorityTaskWoken == pdTRUE;
-}
-
-void app_main(void)
-{
-    esp_log_level_set("*", ESP_LOG_INFO);
-    ESP_LOGI(TAG, "🚨 System Booting - UART controlled mode");
-
-    // Initialize UART communication
-    uart_comm_init();
-
-    // Start UART command task
-    xTaskCreatePinnedToCore(uart_command_task, "uart_cmd_task", 4096, NULL, 5, NULL, 1);
-
-    // GPIO12 powers the sensor
-    gpio_config_t io_conf = {
-        .pin_bit_mask = (1ULL << GPIO_NUM_12),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&io_conf);
-    gpio_set_level(GPIO_NUM_12, 1);
-
-    // Setup sensor
-    sensor_driver_init();
-    flow_sensor_start_measurement();
-
-    // Init motor
-    motor_control_init();
-    motor_control_set_point(1000.0f);
-
-    // Start PID task
-    xTaskCreatePinnedToCore(pid_task, "pid_task", 4096, NULL, 10, &pid_task_handle, 1);
-
-    // Configure GPTimer
-    gptimer_config_t timer_config = {
-        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
-        .direction = GPTIMER_COUNT_UP,
-        .resolution_hz = 1000000,
-    };
-    gptimer_new_timer(&timer_config, &timer);
-
-    gptimer_event_callbacks_t cbs = {
-        .on_alarm = timer_callback,
-    };
-    gptimer_register_event_callbacks(timer, &cbs, NULL);
-
-    gptimer_set_raw_count(timer, 0);
-
-    gptimer_alarm_config_t alarm_config = {
-        .alarm_count = PID_INTERVAL_MS * 1000,
-        .flags.auto_reload_on_alarm = true,
-    };
-    gptimer_set_alarm_action(timer, &alarm_config);
-
-    gptimer_enable(timer);
-    gptimer_start(timer);
-
-    ESP_LOGI(TAG, "System initialized and running");
 }

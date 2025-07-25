@@ -81,7 +81,7 @@ float sensor_driver_read_flow(void)
 
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Flow read failed: %s", esp_err_to_name(ret));
+        //ESP_LOGE(TAG, "Flow read failed: %s", esp_err_to_name(ret));
         return 0.0f;
     }
 
@@ -104,10 +104,4 @@ static void flow_task(void *arg)
         float flow = sensor_driver_read_flow();
         ESP_LOGI(TAG, "Flow = %.2f slm", flow);
     }
-}
-
-// ----------- Create Flow Task -----------
-void flow_task_create(void)
-{
-    xTaskCreatePinnedToCore(flow_task, "flow_task", FLOW_TASK_STACK_SIZE, NULL, FLOW_TASK_PRIORITY, &flow_task_handle, 1);
 }

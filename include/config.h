@@ -8,12 +8,12 @@
 #define I2C_MASTER_FREQ_HZ 100000
 #define SENSOR_ADDR 0x08
 #define PWM_FREQ_HZ 100000
-#define PID_INTERVAL_MS 12
+#define PID_INTERVAL_MS 1000 //12
 
 #define UART_PORT_NUM      UART_NUM_1
-#define UART_BAUD_RATE     115200
-#define UART_TX_PIN        0   // ESP32 TX → Pico RX
-#define UART_RX_PIN        1   // ESP32 RX ← Pico TX
+#define UART_BAUD_RATE     9600
+#define UART_TX_PIN        27   // ESP32 TX → Pico RX
+#define UART_RX_PIN        26  // ESP32 RX ← Pico TX
 #define UART_BUF_SIZE      256
 
 #define CMD_BUFFER_SIZE 10
