@@ -16,7 +16,9 @@
 #define TAG "SUPER_LOOP"
 
 // one global flag, start stopped
+volatile float sp;
 volatile bool is_running = false; // shared with uart_comm.c
+volatile bool manual_mode = false;
 
 void app_main(void)
 {
@@ -36,6 +38,7 @@ void app_main(void)
 
     // I2C sensor init
     sensor_driver_init();
+
     flow_sensor_start_measurement();
 
     // Motor control init + default setpoint
@@ -43,75 +46,87 @@ void app_main(void)
     motor_control_set_point(1000.0f);
 
     // UART init (talk to Pico)
-    uart_config_t ucfg = {
-        .baud_rate = UART_BAUD_RATE,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-    };
-    
     uart_comm_init();
-    char cmd_buf[UART_BUF_SIZE];
-    bool led = true;
+
+    static char rx_buffer[UART_BUF_SIZE];
+    static size_t rx_index = 0;
 
     // --- 2) Super‐loop ---
-    while (1)
+    uint8_t byte;
+
+    while (true)
     {
-
-        ESP_LOGI(TAG, "Running main loop, is_running=%d", is_running);
-
-        // 2a) Poll for a command (non‐blocking, 100 ms timeout)
-        int len = uart_read_bytes(UART_PORT_NUM,
-                                  (uint8_t *)cmd_buf,
-                                  sizeof(cmd_buf) - 1,
-                                  pdMS_TO_TICKS(100));
-        if (len > 0)
+        while (uart_read_bytes(UART_PORT_NUM, &byte, 1, pdMS_TO_TICKS(10)) > 0)
         {
-            cmd_buf[len] = '\0';
-            if (strncmp(cmd_buf, "START", 5) == 0)
-                is_running = true;
-            else if (strncmp(cmd_buf, "STOP", 4) == 0)
-                is_running = false;
-            else if (strncmp(cmd_buf, "REVERSE", 7) == 0)
-                motor_control_reverse();
-            else if (strncmp(cmd_buf, "FORWARD", 7) == 0)
-                motor_control_forward();
-            else if (strncmp(cmd_buf, "SETPOINT:", 9) == 0)
+            if (byte == '\n')
             {
-                float sp = atof(&cmd_buf[9]);
-                motor_control_set_point(sp);
-                is_running = true;
+                rx_buffer[rx_index] = '\0';               // null-terminate the string
+                ESP_LOGI(TAG, "Received: %s", rx_buffer); // 2a) Poll for a command (non‐blocking, 100 ms timeout)
+
+                if (strncmp(rx_buffer, "START", 5) == 0)
+                {
+                    is_running = true;
+                    manual_mode = false;
+                }
+                if (strncmp(rx_buffer, "STOP", 4) == 0)
+                {
+                    is_running = false;
+                    manual_mode = false;
+                    motor_control_stop();
+                    gpio_set_level(GPIO_NUM_2, 0);
+                }
+                if (strncmp(rx_buffer, "REVERSE", 7) == 0)
+                {
+                    motor_control_reverse();
+                    is_running = false;
+                    manual_mode = true;
+                    gpio_set_level(GPIO_NUM_2, 0);
+                }
+                if (strncmp(rx_buffer, "FORWARD", 7) == 0)
+                {
+                    motor_control_forward();
+                    is_running = false;
+                    manual_mode = true;
+                    gpio_set_level(GPIO_NUM_2, 0);
+                }
+                if (strncmp(rx_buffer, "SETPOINT:", 9) == 0)
+                {
+                    sp = atof(&rx_buffer[9]);
+                    motor_control_set_point(sp);
+                    is_running = true;
+                    manual_mode = false;
+                }
+                rx_index = 0; // reset index for next command
             }
-            // (ignore unrecognized)
+            else
+            {
+                if (rx_index < sizeof(rx_buffer) - 1)
+                {
+                    rx_buffer[rx_index++] = byte; // store byte in buffer
+                }
+            }
         }
 
         // 2b) If running, do PID + send flow
         if (is_running)
         {
             // toggle LED so you can see loop running
-            gpio_set_level(GPIO_NUM_2, led);
-            // led = !led;
+            gpio_set_level(GPIO_NUM_2, 1);
 
+            // scan_i2c_bus();
             float flow = motor_control_run_pid();
-            // send back "FLOW:xx.xx\n"
+
             char out[32];
+            //scan_i2c_bus();
             int n = snprintf(out, sizeof(out), "FLOW:%.2f\n", flow);
             uart_write_bytes(UART_PORT_NUM, out, n);
         }
-        else
+        else if (!manual_mode)
         {
             motor_control_stop();
+            gpio_set_level(GPIO_NUM_2, 0);
         }
         vTaskDelay(pdMS_TO_TICKS(12));
-        // esp_rom_delay_us(12000);
-
-        // 2c) Delay ~12 ms before next loop
-        // while (true)
-        // {
-        //     gpio_set_level(GPIO_NUM_2, 1);
-        //     vTaskDelay(pdMS_TO_TICKS(500));
-        //     gpio_set_level(GPIO_NUM_2, 0);
-        // }
+        
     }
 }

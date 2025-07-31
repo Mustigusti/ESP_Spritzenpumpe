@@ -81,8 +81,8 @@ float sensor_driver_read_flow(void)
 
     if (ret != ESP_OK)
     {
-        //ESP_LOGE(TAG, "Flow read failed: %s", esp_err_to_name(ret));
-        return 0.0f;
+        ESP_LOGE(TAG, "Flow read failed: %s", esp_err_to_name(ret));
+        // return 0.0f;
     }
 
     float raw_flow = (data[0] << 8) | data[1];
@@ -97,11 +97,21 @@ float sensor_driver_read_flow(void)
 }
 
 // ----------- Flow Reading Task -----------
-static void flow_task(void *arg)
+void scan_i2c_bus()
 {
-    while (true)
+    printf("Scanning I2C bus...\n");
+    for (uint8_t addr = 1; addr < 127; addr++)
     {
-        float flow = sensor_driver_read_flow();
-        ESP_LOGI(TAG, "Flow = %.2f slm", flow);
+        i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+        i2c_master_start(cmd);
+        i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
+        i2c_master_stop(cmd);
+
+        esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(100));
+        i2c_cmd_link_delete(cmd);
+
+        if (ret == ESP_OK)
+            printf("Device found at 0x%02X\n", addr);
     }
+    printf("Scan done.\n");
 }
