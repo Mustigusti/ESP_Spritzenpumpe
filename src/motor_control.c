@@ -15,6 +15,8 @@ static float prev_error = 0;
 
 extern bool is_running;
 
+extern volatile int latest_flow;
+
 static void pwm_init()
 {
     mcpwm_gpio_init(MCPWM_UNIT_0, MCPWM0A, 32);
@@ -42,7 +44,7 @@ void motor_control_set_point(float sp)
 
 float motor_control_run_pid()
 {
-    int flow_rate = sensor_driver_read_flow();
+    int flow_rate = latest_flow;  // Use cached value, no I2C
     float error = set_point - flow_rate;
     integral += error;
     float derivative = error - prev_error;
@@ -58,9 +60,9 @@ float motor_control_run_pid()
     mcpwm_set_duty_type(MCPWM_UNIT_0, MCPWM_TIMER_0, MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
 
     prev_error = error;
-    // ESP_LOGI(TAG, "Setpoint=%.2f, Flow=%.2f, Duty=%u", set_point, flow_rate, (unsigned int)duty); // Commented out bcs its called in Interrupt Service Routine (every 12ms)
     return flow_rate;
 }
+
 
 void motor_control_stop()
 {

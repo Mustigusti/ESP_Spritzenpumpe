@@ -21,6 +21,8 @@
 static const char *TAG = "FLOW_SENSOR";
 static TaskHandle_t flow_task_handle = NULL;
 
+volatile int latest_flow = 0;
+
 // ----------- Sensor I2C INIT -----------
 
 void sensor_driver_init(void)
@@ -114,4 +116,15 @@ void scan_i2c_bus()
             printf("Device found at 0x%02X\n", addr);
     }
     printf("Scan done.\n");
+}
+
+
+void flow_task(void *arg)
+{
+    while (1)
+    {
+        int flow = sensor_driver_read_flow();  // Safe I2C access
+        latest_flow = flow;
+        vTaskDelay(pdMS_TO_TICKS(12));
+    }
 }
